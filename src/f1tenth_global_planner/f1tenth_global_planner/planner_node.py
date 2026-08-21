@@ -1,4 +1,3 @@
-# ~/autodrive_ws/src/f1tenth_global_planner/f1tenth_global_planner/planner_node.py
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
@@ -60,8 +59,11 @@ class PlannerNode(Node):
         return (int((x - origin.position.x) / res), int((y - origin.position.y) / res))
 
     def run_planning(self, gx_world, gy_world):
-        env, res, origin = grid_from_occupancy_msg(self.map_msg)
-
+        env, res, origin = grid_from_occupancy_msg(
+        self.map_msg,
+        clearance_m=0.25,
+        debug_dir=os.path.expanduser('~/autodrive_ws/src/f1tenth_global_planner/output/map_debug'),
+    )
         try:
             sx, sy = self.get_start_world()
         except Exception as e:

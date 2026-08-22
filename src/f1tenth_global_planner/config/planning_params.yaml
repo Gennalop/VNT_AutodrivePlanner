@@ -1,0 +1,22 @@
+# Parámetros compartidos por todos los nodos del pipeline de planificación.
+
+/**:
+  ros__parameters:
+    clearance_m: 0.25          # margen de inflado de obstáculos (m). Usado por lpa_star_planner y path_smoother.
+    occ_threshold: 50          # umbral 0-100 para considerar una celda ocupada en el OccupancyGrid.
+
+lpa_star_planner:
+  ros__parameters:
+    goal_topic: /goal_pose
+    base_frame: f1tenth_1
+    map_frame: map
+    expand_publish_every_n: 15   # cada cuántos nodos nuevos se publica /expand_markers
+
+path_smoother:
+  ros__parameters:
+    output_dir: "~/autodrive_ws/src/f1tenth_global_planner/output"
+    smoothing_tolerance_m: 0.15
+    dense_samples: 1000
+    waypoint_spacings: [0.5, 1.0]
+    zoom_radius_m: 1.0     
+    zoom_box_frac: 0.55

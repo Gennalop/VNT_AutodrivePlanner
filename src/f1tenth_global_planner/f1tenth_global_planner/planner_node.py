@@ -1,23 +1,38 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, QoSHistoryPolicy
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Point
 from visualization_msgs.msg import Marker, MarkerArray
 import tf2_ros
 
-import os
-import sys
-sys.path.insert(0, os.path.dirname(__file__))
-
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, QoSHistoryPolicy
-
 from .grid_from_occupancy import grid_from_occupancy_msg
-from python_motion_planning.utils import SearchFactory   # antes: from .python_motion_planning.utils import SearchFactory
+from python_motion_planning.utils import SearchFactory
+
 
 class PlannerNode(Node):
     def __init__(self):
         super().__init__('lpa_star_planner')
+
+        # ---- Parámetros (vienen de config/planning_params.yaml) ----
+        self.declare_parameter('clearance_m', 0.25)
+        self.declare_parameter('occ_threshold', 50)
+        self.declare_parameter('goal_topic', '/goal_pose')
+        self.declare_parameter('base_frame', 'f1tenth_1')
+        self.declare_parameter('map_frame', 'map')
+        self.declare_parameter('expand_publish_every_n', 15)
+
+        self.clearance_m = self.get_parameter('clearance_m').value
+        self.occ_threshold = self.get_parameter('occ_threshold').value
+        self.base_frame = self.get_parameter('base_frame').value
+        self.map_frame = self.get_parameter('map_frame').value
+        self.expand_publish_every_n = self.get_parameter('expand_publish_every_n').value
+        goal_topic = self.get_parameter('goal_topic').value
 
         self.map_msg = None
 
@@ -28,7 +43,7 @@ class PlannerNode(Node):
             depth=1,
         )
         self.create_subscription(OccupancyGrid, '/map', self.on_map, map_qos)
-        self.create_subscription(PoseStamped, '/goal_pose', self.on_goal, 10)
+        self.create_subscription(PoseStamped, goal_topic, self.on_goal, 10)
 
         self.path_pub = self.create_publisher(Path, '/raw_path', 1)
         self.expand_pub = self.create_publisher(MarkerArray, '/expand_markers', 1)
@@ -36,10 +51,18 @@ class PlannerNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        self.get_logger().info('Planner listo. Esperando /map y clic de "2D Goal Pose" en RViz...')
-        
+        self.get_logger().info(
+            f'Planner listo (clearance={self.clearance_m}m, frames={self.map_frame}->{self.base_frame}). '
+            f'Esperando /map y clic de "2D Goal Pose" en {goal_topic}...'
+        )
+
+    # ------------------------------------------------------------------
+    # Callbacks
+    # ------------------------------------------------------------------
+
     def on_map(self, msg):
         self.map_msg = msg
+        self.get_logger().info(f'Mapa recibido: {msg.info.width}x{msg.info.height} @ {msg.info.resolution:.4f} m/celda')
 
     def on_goal(self, msg: PoseStamped):
         if self.map_msg is None:
@@ -48,22 +71,29 @@ class PlannerNode(Node):
         self.get_logger().info(f'Nuevo goal recibido: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})')
         self.run_planning(msg.pose.position.x, msg.pose.position.y)
 
+    # ------------------------------------------------------------------
+    # Conversión mundo <-> grid
+    # ------------------------------------------------------------------
+
     def get_start_world(self):
-        # 'map' debe coincidir con el frame_id que publica tu map_server (Paso 1)
-        # 'f1tenth_1' debe coincidir con el base_frame real del robot (confírmalo con tu README de Parte A)
-        tf = self.tf_buffer.lookup_transform('map', 'f1tenth_1', Time())
+        tf = self.tf_buffer.lookup_transform(self.map_frame, self.base_frame, Time())
         return tf.transform.translation.x, tf.transform.translation.y
 
     @staticmethod
     def world_to_grid(x, y, origin, res):
         return (int((x - origin.position.x) / res), int((y - origin.position.y) / res))
 
+    # ------------------------------------------------------------------
+    # Planificación
+    # ------------------------------------------------------------------
+
     def run_planning(self, gx_world, gy_world):
         env, res, origin = grid_from_occupancy_msg(
-        self.map_msg,
-        clearance_m=0.25,
-        debug_dir=os.path.expanduser('~/autodrive_ws/src/f1tenth_global_planner/output/map_debug'),
-    )
+            self.map_msg,
+            occ_threshold=self.occ_threshold,
+            clearance_m=self.clearance_m,
+        )
+
         try:
             sx, sy = self.get_start_world()
         except Exception as e:
@@ -75,7 +105,6 @@ class PlannerNode(Node):
         self.get_logger().info(f'Start (grid): {start} | Goal (grid): {goal}')
 
         planner = SearchFactory()('lpa_star', start=start, goal=goal, env=env)
-
         self.run_lpa_star_stepwise(planner, origin, res)
 
     def run_lpa_star_stepwise(self, planner, origin, res):
@@ -101,7 +130,7 @@ class PlannerNode(Node):
             for n in planner.getNeighbor(node):
                 planner.updateVertex(n)
 
-            if len(planner.EXPAND) - prev_len >= 15:
+            if len(planner.EXPAND) - prev_len >= self.expand_publish_every_n:
                 self.publish_expand(planner.EXPAND, origin, res)
                 prev_len = len(planner.EXPAND)
 
@@ -114,10 +143,14 @@ class PlannerNode(Node):
         self.get_logger().info(f'Path encontrado. Costo: {cost:.2f}, nodos expandidos: {len(planner.EXPAND)}')
         self.publish_path(path, origin, res)
 
+    # ------------------------------------------------------------------
+    # Publicación
+    # ------------------------------------------------------------------
+
     def publish_expand(self, expand_nodes, origin, res):
         arr = MarkerArray()
         m = Marker()
-        m.header.frame_id = 'map'
+        m.header.frame_id = self.map_frame
         m.header.stamp = self.get_clock().now().to_msg()
         m.ns = 'lpa_star_expand'
         m.id = 0
@@ -135,11 +168,11 @@ class PlannerNode(Node):
 
     def publish_path(self, path, origin, res):
         msg = Path()
-        msg.header.frame_id = 'map'
+        msg.header.frame_id = self.map_frame
         msg.header.stamp = self.get_clock().now().to_msg()
         for (gx, gy) in path:
             ps = PoseStamped()
-            ps.header.frame_id = 'map'
+            ps.header.frame_id = self.map_frame
             ps.pose.position.x = origin.position.x + gx * res
             ps.pose.position.y = origin.position.y + gy * res
             ps.pose.orientation.w = 1.0

@@ -2,6 +2,8 @@
 
 Paquete ROS 2 que implementa un controlador **LQR (Linear Quadratic Regulator)** para que el vehículo F1TENTH siga de forma autónoma la trayectoria global suavizada, generada en la Parte 1 del proyecto, dentro del simulador AutoDRIVE.
 
+![demo](./videos/control.gif)
+
 ---
 
 ## 🔗 Relación con la Parte 1

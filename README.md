@@ -156,3 +156,6 @@ En cada ciclo, el nodo:
 
 - **Parámetros aún no centralizados en YAML** (a diferencia de la Parte 1) — pendiente si se quiere mantener consistencia con el resto del proyecto.
 - **Sin archivo de `launch`** — actualmente se ejecuta con `ros2 run` directo; considera armar un `launch/lqr_control.launch.py` si el flujo de arranque se vuelve repetitivo (por ejemplo, para lanzarlo junto con Parte 1 en un solo comando).
+
+## Video de ejecución
+https://youtu.be/NijfYExO67U
